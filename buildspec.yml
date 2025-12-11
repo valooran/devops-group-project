@@ -9,7 +9,7 @@ phases:
   build:
     commands:
       - echo Build started on `date`
-      - echo Building the Docker images...
+      - echo Building Docker images...
       - docker build -t $PROJECT_NAME-posts ./posts
       - docker build -t $PROJECT_NAME-threads ./threads
       - docker build -t $PROJECT_NAME-users ./users
@@ -18,12 +18,40 @@ phases:
       - docker tag $PROJECT_NAME-users:latest $REPO_URL/$PROJECT_NAME-users:latest
   post_build:
     commands:
-      - echo Build completed on `date`
-      - echo Pushing the Docker images...
+      - echo Pushing Docker images...
       - docker push $REPO_URL/$PROJECT_NAME-posts:latest
       - docker push $REPO_URL/$PROJECT_NAME-threads:latest
       - docker push $REPO_URL/$PROJECT_NAME-users:latest
-      - echo Updating ECS Services...
-      - aws ecs update-service --cluster $PROJECT_NAME-cluster --service $PROJECT_NAME-posts-service --force-new-deployment
-      - aws ecs update-service --cluster $PROJECT_NAME-cluster --service $PROJECT_NAME-threads-service --force-new-deployment
-      - aws ecs update-service --cluster $PROJECT_NAME-cluster --service $PROJECT_NAME-users-service --force-new-deployment
+      
+      - echo Creating AppSpec files...
+      # We create a simple AppSpec for CodeDeploy
+      - |
+        cat <<EOF > appspec.yaml
+        version: 0.0
+        Resources:
+          - TargetService:
+              Type: AWS::ECS::Service
+              Properties:
+                TaskDefinition: "<TASK_DEFINITION>"
+                LoadBalancerInfo:
+                  ContainerName: "<CONTAINER_NAME>"
+                  ContainerPort: 3000
+        EOF
+      
+      - echo Triggering Blue/Green Deployments...
+      # Retrieve the latest Task Definition ARN for each service and trigger deploy
+      
+      # --- POSTS ---
+      - TASK_DEF_ARN=$(aws ecs describe-task-definition --task-definition $PROJECT_NAME-posts --query 'taskDefinition.taskDefinitionArn' --output text)
+      - sed -e "s|<TASK_DEFINITION>|$TASK_DEF_ARN|g" -e "s|<CONTAINER_NAME>|$PROJECT_NAME-posts|g" appspec.yaml > appspec_posts.yaml
+      - aws deploy create-deployment --application-name $PROJECT_NAME-deploy-app --deployment-group-name $PROJECT_NAME-posts-deploy-group --revision "{\"revisionType\": \"AppSpecContent\", \"appSpecContent\": {\"content\": \"$(cat appspec_posts.yaml | sed 's/"/\\"/g')\"}}"
+
+      # --- THREADS ---
+      - TASK_DEF_ARN=$(aws ecs describe-task-definition --task-definition $PROJECT_NAME-threads --query 'taskDefinition.taskDefinitionArn' --output text)
+      - sed -e "s|<TASK_DEFINITION>|$TASK_DEF_ARN|g" -e "s|<CONTAINER_NAME>|$PROJECT_NAME-threads|g" appspec.yaml > appspec_threads.yaml
+      - aws deploy create-deployment --application-name $PROJECT_NAME-deploy-app --deployment-group-name $PROJECT_NAME-threads-deploy-group --revision "{\"revisionType\": \"AppSpecContent\", \"appSpecContent\": {\"content\": \"$(cat appspec_threads.yaml | sed 's/"/\\"/g')\"}}"
+
+      # --- USERS ---
+      - TASK_DEF_ARN=$(aws ecs describe-task-definition --task-definition $PROJECT_NAME-users --query 'taskDefinition.taskDefinitionArn' --output text)
+      - sed -e "s|<TASK_DEFINITION>|$TASK_DEF_ARN|g" -e "s|<CONTAINER_NAME>|$PROJECT_NAME-users|g" appspec.yaml > appspec_users.yaml
+      - aws deploy create-deployment --application-name $PROJECT_NAME-deploy-app --deployment-group-name $PROJECT_NAME-users-deploy-group --revision "{\"revisionType\": \"AppSpecContent\", \"appSpecContent\": {\"content\": \"$(cat appspec_users.yaml | sed 's/"/\\"/g')\"}}"
