@@ -1,0 +1,29 @@
+version: 0.2
+
+phases:
+  pre_build:
+    commands:
+      - echo Logging in to Amazon ECR...
+      - aws ecr get-login-password --region $AWS_DEFAULT_REGION | docker login --username AWS --password-stdin $AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com
+      - REPO_URL=$AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com
+  build:
+    commands:
+      - echo Build started on `date`
+      - echo Building the Docker images...
+      - docker build -t $PROJECT_NAME-posts ./posts
+      - docker build -t $PROJECT_NAME-threads ./threads
+      - docker build -t $PROJECT_NAME-users ./users
+      - docker tag $PROJECT_NAME-posts:latest $REPO_URL/$PROJECT_NAME-posts:latest
+      - docker tag $PROJECT_NAME-threads:latest $REPO_URL/$PROJECT_NAME-threads:latest
+      - docker tag $PROJECT_NAME-users:latest $REPO_URL/$PROJECT_NAME-users:latest
+  post_build:
+    commands:
+      - echo Build completed on `date`
+      - echo Pushing the Docker images...
+      - docker push $REPO_URL/$PROJECT_NAME-posts:latest
+      - docker push $REPO_URL/$PROJECT_NAME-threads:latest
+      - docker push $REPO_URL/$PROJECT_NAME-users:latest
+      - echo Updating ECS Services...
+      - aws ecs update-service --cluster $PROJECT_NAME-cluster --service $PROJECT_NAME-posts-service --force-new-deployment
+      - aws ecs update-service --cluster $PROJECT_NAME-cluster --service $PROJECT_NAME-threads-service --force-new-deployment
+      - aws ecs update-service --cluster $PROJECT_NAME-cluster --service $PROJECT_NAME-users-service --force-new-deployment
